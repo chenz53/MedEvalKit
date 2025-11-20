@@ -12,10 +12,8 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-import importlib
 import math
 import re
-import warnings
 from dataclasses import asdict, dataclass, field
 from enum import Enum
 from typing import List, Optional, Union
@@ -23,9 +21,8 @@ from typing import List, Optional, Union
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from transformers.pytorch_utils import Conv1D
 
-from ..utils import PeftConfig, PeftType, transpose
+from ..utils import PeftConfig, PeftType
 
 
 @dataclass
@@ -61,14 +58,22 @@ class LoraConfig(PeftConfig):
     blc_weight: int = field(default=None, metadata={"help": "Weight of blcloss"})
     lora_dropout: float = field(default=None, metadata={"help": "Lora dropout"})
     merge_weights: bool = field(
-        default=False, metadata={"help": "Merge weights of the original model and the Lora model"}
+        default=False,
+        metadata={"help": "Merge weights of the original model and the Lora model"},
     )
     fan_in_fan_out: bool = field(
         default=False,
-        metadata={"help": "Set this to True if the layer to replace stores weight like (fan_in, fan_out)"},
+        metadata={
+            "help": "Set this to True if the layer to replace stores weight like (fan_in, fan_out)"
+        },
     )
-    enable_lora: Optional[List[bool]] = field(default=None, metadata={"help": "Used with `lora.MergedLinear`."})
-    bias: str = field(default="none", metadata={"help": "Bias type for Lora. Can be 'none', 'all' or 'lora_only'"})
+    enable_lora: Optional[List[bool]] = field(
+        default=None, metadata={"help": "Used with `lora.MergedLinear`."}
+    )
+    bias: str = field(
+        default="none",
+        metadata={"help": "Bias type for Lora. Can be 'none', 'all' or 'lora_only'"},
+    )
     modules_to_save: Optional[List[str]] = field(
         default=None,
         metadata={
@@ -77,7 +82,6 @@ class LoraConfig(PeftConfig):
             "the final layer `classifier/score` are randomly initialized and as such need to be trainable and saved."
         },
     )
-
 
     def __post_init__(self):
         self.peft_type = PeftType.LORA
@@ -107,7 +111,7 @@ class LoraModel(torch.nn.Module):
         - **peft_config** ([`LoraConfig`]): The configuration of the Lora model.
     """
 
-    def __init__(self, config, model): # LoraConfig, CasualLM
+    def __init__(self, config, model):  # LoraConfig, CasualLM
         super().__init__()
         self.peft_config = config
         self.model = model
@@ -118,7 +122,7 @@ class LoraModel(torch.nn.Module):
     def _find_and_replace(self):
         loaded_in_4bit = getattr(self.model, "is_loaded_in_4bit", False)
         loaded_in_8bit = getattr(self.model, "is_loaded_in_8bit", False)
-        if (loaded_in_4bit or loaded_in_8bit):
+        if loaded_in_4bit or loaded_in_8bit:
             raise ImportError(
                 "To use Lora with 8-bit or 4-bit quantization, please install the `bitsandbytes` package. "
                 "You can install it with `pip install bitsandbytes`."
@@ -141,15 +145,23 @@ class LoraModel(torch.nn.Module):
             if isinstance(self.peft_config.target_modules, str):
                 target_module_found = re.fullmatch(self.peft_config.target_modules, key)
             else:
-                target_module_found = any(key.endswith(target_key) for target_key in self.peft_config.target_modules)
-            if target_module_found: # here
+                target_module_found = any(
+                    key.endswith(target_key)
+                    for target_key in self.peft_config.target_modules
+                )
+            if target_module_found:  # here
                 if not is_target_modules_in_base_model:
                     is_target_modules_in_base_model = True
                 parent, target, target_name = self._get_submodules(key)
                 bias = target.bias is not None
 
-                if isinstance(target, torch.nn.Linear) and self.peft_config.enable_lora is None:
-                    new_module = Linear(target.in_features, target.out_features, bias=bias, **kwargs)
+                if (
+                    isinstance(target, torch.nn.Linear)
+                    and self.peft_config.enable_lora is None
+                ):
+                    new_module = Linear(
+                        target.in_features, target.out_features, bias=bias, **kwargs
+                    )
 
                 self._replace_module(parent, target_name, new_module, target)
         if not is_target_modules_in_base_model:
@@ -190,7 +202,10 @@ class LoraModel(torch.nn.Module):
         return None
 
     def get_peft_config_as_dict(self, inference: bool = False):
-        config = {k: v.value if isinstance(v, Enum) else v for k, v in asdict(self.peft_config).items()}
+        config = {
+            k: v.value if isinstance(v, Enum) else v
+            for k, v in asdict(self.peft_config).items()
+        }
         if inference:
             config["inference_mode"] = True
         return config
@@ -235,6 +250,7 @@ def mark_only_lora_as_trainable(model: nn.Module, bias: str = "none") -> None:
     else:
         raise NotImplementedError
 
+
 class LoraLayer:
     def __init__(
         self,
@@ -255,6 +271,7 @@ class LoraLayer:
         self.merge_weights = merge_weights
         self.disable_adapters = False
 
+
 class Linear(nn.Linear, LoraLayer):
     # Lora implemented in a dense layer
     def __init__(
@@ -269,15 +286,21 @@ class Linear(nn.Linear, LoraLayer):
         **kwargs,
     ):
         nn.Linear.__init__(self, in_features, out_features, **kwargs)
-        LoraLayer.__init__(self, r=r, lora_alpha=lora_alpha, lora_dropout=lora_dropout, merge_weights=merge_weights)
+        LoraLayer.__init__(
+            self,
+            r=r,
+            lora_alpha=lora_alpha,
+            lora_dropout=lora_dropout,
+            merge_weights=merge_weights,
+        )
 
         self.lora_num = lora_nums
         self.times = int(self.r / lora_nums)
 
         # Actual trainable parameters
         self.lora_route = nn.Linear(in_features, self.lora_num, bias=False)
-        setattr(self, f"lora_A", nn.Linear(in_features, self.r, bias=False))
-        setattr(self, f"lora_B", nn.Linear(self.r, out_features, bias=False))
+        setattr(self, "lora_A", nn.Linear(in_features, self.r, bias=False))
+        setattr(self, "lora_B", nn.Linear(self.r, out_features, bias=False))
 
         self.scaling = self.lora_alpha / self.r * self.lora_num
         # Freezing the pre-trained weight matrix
@@ -286,29 +309,32 @@ class Linear(nn.Linear, LoraLayer):
 
     def reset_parameters(self):
         nn.Linear.reset_parameters(self)
-        
+
         if hasattr(self, "lora_A"):
-            nn.init.kaiming_uniform_(getattr(self, f"lora_A").weight, a=math.sqrt(5))
-            nn.init.zeros_(getattr(self, f"lora_B").weight)
+            nn.init.kaiming_uniform_(getattr(self, "lora_A").weight, a=math.sqrt(5))
+            nn.init.zeros_(getattr(self, "lora_B").weight)
             nn.init.kaiming_uniform_(self.lora_route.weight, a=math.sqrt(5))
 
     def train(self, mode: bool = True):
         nn.Linear.train(self, mode)
         self.lora_route.train(mode)
-        getattr(self, f"lora_A").train(mode)
-        getattr(self, f"lora_B").train(mode)
-            
+        getattr(self, "lora_A").train(mode)
+        getattr(self, "lora_B").train(mode)
 
     def eval(self):
         nn.Linear.eval(self)
         self.lora_route.eval()
-        getattr(self, f"lora_A").eval()
-        getattr(self, f"lora_B").eval()     
+        getattr(self, "lora_A").eval()
+        getattr(self, "lora_B").eval()
 
     def forward(self, x: torch.Tensor):
         result = F.linear(x, self.weight, bias=self.bias)
-        route_weight = nn.functional.softmax(self.lora_route(x), dim=-1).to(result.dtype)
+        route_weight = nn.functional.softmax(self.lora_route(x), dim=-1).to(
+            result.dtype
+        )
         output_A = getattr(self, "lora_A")(x) * self.scaling
         router_expand = route_weight.repeat_interleave(self.times, dim=-1)
-        result = result + getattr(self, "lora_B")(router_expand * self.lora_dropout(output_A))
+        result = result + getattr(self, "lora_B")(
+            router_expand * self.lora_dropout(output_A)
+        )
         return result

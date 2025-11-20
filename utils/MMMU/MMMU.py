@@ -1,9 +1,11 @@
-
-from .eval_val import eval_MMMU_val
 from .eval_test import eval_MMMU_test
+from .eval_val import eval_MMMU_val
+
 
 class MMMU:
-    def __init__(self,model,dataset_path,output_path,split = "test",subset = "Medical"):
+    def __init__(
+        self, model, dataset_path, output_path, split="test", subset="Medical"
+    ):
         self.split = split
         self.subset = subset
         self.model = model
@@ -24,9 +26,7 @@ class MMMU:
         elif self.subset == "Science":
             subset = "Science"
         if self.split == "test":
-            matrics = eval_MMMU_test(model,dataset_path,output_path,subset)
+            matrics = eval_MMMU_test(model, dataset_path, output_path, subset)
         else:
-            matrics = eval_MMMU_val(model,dataset_path,output_path,subset)
+            matrics = eval_MMMU_val(model, dataset_path, output_path, subset)
         return matrics
-
-                

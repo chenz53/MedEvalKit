@@ -20,14 +20,18 @@ from .peft_model import (
     PeftModelForSequenceClassification,
     PeftModelForTokenClassification,
 )
-from .tuners import LoraConfig, PrefixTuningConfig, PromptEncoderConfig, PromptTuningConfig
+from .tuners import (
+    LoraConfig,
+    PrefixTuningConfig,
+    PromptEncoderConfig,
+    PromptTuningConfig,
+)
 from .utils import PromptLearningConfig
-
 
 MODEL_TYPE_TO_PEFT_MODEL_MAPPING = {
     "SEQ_CLS": PeftModelForSequenceClassification,
     "SEQ_2_SEQ_LM": PeftModelForSeq2SeqLM,
-    "CAUSAL_LM": PeftModelForCausalLM, # here
+    "CAUSAL_LM": PeftModelForCausalLM,  # here
     "TOKEN_CLS": PeftModelForTokenClassification,
 }
 
@@ -115,9 +119,14 @@ def _prepare_prompt_learning_config(peft_config, model_config):
 
 def _prepare_lora_config(peft_config, model_config):
     if peft_config.target_modules is None:
-        if model_config["model_type"] not in TRANSFORMERS_MODELS_TO_LORA_TARGET_MODULES_MAPPING:
+        if (
+            model_config["model_type"]
+            not in TRANSFORMERS_MODELS_TO_LORA_TARGET_MODULES_MAPPING
+        ):
             raise ValueError("Please specify `target_modules` in `peft_config`")
-        peft_config.target_modules = TRANSFORMERS_MODELS_TO_LORA_TARGET_MODULES_MAPPING[model_config["model_type"]]
+        peft_config.target_modules = TRANSFORMERS_MODELS_TO_LORA_TARGET_MODULES_MAPPING[
+            model_config["model_type"]
+        ]
     if len(peft_config.target_modules) == 1:
         peft_config.fan_in_fan_out = True
         peft_config.enable_lora = [True, False, True]
@@ -142,11 +151,9 @@ def get_peft_model(model, peft_config):
     if peft_config.task_type not in MODEL_TYPE_TO_PEFT_MODEL_MAPPING.keys():
         peft_config = _prepare_lora_config(peft_config, model_config)
         return PeftModel(model, peft_config)
-    if not isinstance(peft_config, PromptLearningConfig): # -------------> here
+    if not isinstance(peft_config, PromptLearningConfig):  # -------------> here
         peft_config = _prepare_lora_config(peft_config, model_config)
     else:
         peft_config = _prepare_prompt_learning_config(peft_config, model_config)
 
-
     return MODEL_TYPE_TO_PEFT_MODEL_MAPPING[peft_config.task_type](model, peft_config)
-        

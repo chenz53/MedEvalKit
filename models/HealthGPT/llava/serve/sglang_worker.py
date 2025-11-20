@@ -1,30 +1,27 @@
 """
 A model worker executes the model.
 """
+
 import argparse
 import asyncio
-from concurrent.futures import ThreadPoolExecutor
 import json
-import time
 import threading
+import time
 import uuid
-
-from fastapi import FastAPI, Request, BackgroundTasks
-from fastapi.responses import StreamingResponse
-import requests
-import re
-import uvicorn
 from functools import partial
 
-from llava.constants import WORKER_HEART_BEAT_INTERVAL
-from llava.utils import (build_logger, server_error_msg,
-    pretty_print_semaphore)
-from llava.mm_utils import process_images, load_image_from_base64, tokenizer_image_token, expand2square
-from llava.constants import DEFAULT_IMAGE_TOKEN
-
+import requests
 import sglang as sgl
+import uvicorn
+from fastapi import BackgroundTasks, FastAPI, Request
+from fastapi.responses import StreamingResponse
 from sglang.backend.runtime_endpoint import RuntimeEndpoint
 
+from llava.constants import DEFAULT_IMAGE_TOKEN, WORKER_HEART_BEAT_INTERVAL
+from llava.mm_utils import (
+    load_image_from_base64,
+)
+from llava.utils import build_logger, pretty_print_semaphore, server_error_msg
 
 GB = 1 << 30
 
@@ -52,8 +49,15 @@ def pipeline(s, prompt, max_tokens):
 
 
 class ModelWorker:
-    def __init__(self, controller_addr, worker_addr, sgl_endpoint,
-                 worker_id, no_register, model_name):
+    def __init__(
+        self,
+        controller_addr,
+        worker_addr,
+        sgl_endpoint,
+        worker_id,
+        no_register,
+        model_name,
+    ):
         self.controller_addr = controller_addr
         self.worker_addr = worker_addr
         self.worker_id = worker_id
@@ -67,19 +71,22 @@ class ModelWorker:
             model_path = model_path[:-1]
         if model_name is None:
             model_paths = model_path.split("/")
-            if model_paths[-1].startswith('checkpoint-'):
+            if model_paths[-1].startswith("checkpoint-"):
                 self.model_name = model_paths[-2] + "_" + model_paths[-1]
             else:
                 self.model_name = model_paths[-1]
         else:
             self.model_name = model_name
 
-        logger.info(f"Loading the SGLANG model {self.model_name} on worker {worker_id} ...")
+        logger.info(
+            f"Loading the SGLANG model {self.model_name} on worker {worker_id} ..."
+        )
 
         if not no_register:
             self.register_to_controller()
             self.heart_beat_thread = threading.Thread(
-                target=heart_beat_worker, args=(self,), daemon=True)
+                target=heart_beat_worker, args=(self,), daemon=True
+            )
             self.heart_beat_thread.start()
 
     def register_to_controller(self):
@@ -89,23 +96,30 @@ class ModelWorker:
         data = {
             "worker_name": self.worker_addr,
             "check_heart_beat": True,
-            "worker_status": self.get_status()
+            "worker_status": self.get_status(),
         }
         r = requests.post(url, json=data)
         assert r.status_code == 200
 
     def send_heart_beat(self):
-        logger.info(f"Send heart beat. Models: {[self.model_name]}. "
-                    f"Semaphore: {pretty_print_semaphore(model_semaphore)}. "
-                    f"global_counter: {global_counter}")
+        logger.info(
+            f"Send heart beat. Models: {[self.model_name]}. "
+            f"Semaphore: {pretty_print_semaphore(model_semaphore)}. "
+            f"global_counter: {global_counter}"
+        )
 
         url = self.controller_addr + "/receive_heart_beat"
 
         while True:
             try:
-                ret = requests.post(url, json={
-                    "worker_name": self.worker_addr,
-                    "queue_length": self.get_queue_length()}, timeout=5)
+                ret = requests.post(
+                    url,
+                    json={
+                        "worker_name": self.worker_addr,
+                        "queue_length": self.get_queue_length(),
+                    },
+                    timeout=5,
+                )
                 exist = ret.json()["exist"]
                 break
             except requests.exceptions.RequestException as e:
@@ -119,8 +133,15 @@ class ModelWorker:
         if model_semaphore is None:
             return 0
         else:
-            return args.limit_model_concurrency - model_semaphore._value + (len(
-                model_semaphore._waiters) if model_semaphore._waiters is not None else 0)
+            return (
+                args.limit_model_concurrency
+                - model_semaphore._value
+                + (
+                    len(model_semaphore._waiters)
+                    if model_semaphore._waiters is not None
+                    else 0
+                )
+            )
 
     def get_status(self):
         return {
@@ -135,7 +156,9 @@ class ModelWorker:
         if images is not None and len(images) > 0:
             if len(images) > 0:
                 if len(images) != prompt.count(DEFAULT_IMAGE_TOKEN):
-                    raise ValueError("Number of images does not match number of <image> tokens in prompt")
+                    raise ValueError(
+                        "Number of images does not match number of <image> tokens in prompt"
+                    )
 
                 images = [load_image_from_base64(image) for image in images]
 
@@ -144,7 +167,9 @@ class ModelWorker:
                 # if getattr(self.model.config, 'mm_use_im_start_end', False):
                 #     replace_token = DEFAULT_IM_START_TOKEN + replace_token + DEFAULT_IM_END_TOKEN
                 # prompt = prompt.replace(DEFAULT_IMAGE_TOKEN, replace_token)
-                prompt = prompt.replace(' ' + DEFAULT_IMAGE_TOKEN + '\n', DEFAULT_IMAGE_TOKEN)
+                prompt = prompt.replace(
+                    " " + DEFAULT_IMAGE_TOKEN + "\n", DEFAULT_IMAGE_TOKEN
+                )
                 prompt_split = prompt.split(DEFAULT_IMAGE_TOKEN)
                 prompt = []
                 for i in range(len(prompt_split)):
@@ -161,8 +186,17 @@ class ModelWorker:
         stop_str = params.get("stop", None)
         stop_str = [stop_str] if stop_str is not None else None
 
-        print({'prompt': prompt, 'max_new_tokens': max_new_tokens, 'temperature': temperature, 'top_p': top_p})
-        state = pipeline.run(prompt, max_new_tokens, temperature=temperature, top_p=top_p, stream=True)
+        print(
+            {
+                "prompt": prompt,
+                "max_new_tokens": max_new_tokens,
+                "temperature": temperature,
+                "top_p": top_p,
+            }
+        )
+        state = pipeline.run(
+            prompt, max_new_tokens, temperature=temperature, top_p=top_p, stream=True
+        )
 
         generated_text = ori_prompt
         async for text_outputs in state.text_async_iter(var_name="response"):
@@ -210,7 +244,9 @@ async def generate_stream(request: Request):
     worker.send_heart_beat()
     generator = worker.generate_stream_gate(params)
     background_tasks = BackgroundTasks()
-    background_tasks.add_task(partial(release_model_semaphore, fn=worker.send_heart_beat))
+    background_tasks.add_task(
+        partial(release_model_semaphore, fn=worker.send_heart_beat)
+    )
     return StreamingResponse(generator, background=background_tasks)
 
 
@@ -223,10 +259,10 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--host", type=str, default="localhost")
     parser.add_argument("--port", type=int, default=21002)
-    parser.add_argument("--worker-address", type=str,
-        default="http://localhost:21002")
-    parser.add_argument("--controller-address", type=str,
-        default="http://localhost:21001")
+    parser.add_argument("--worker-address", type=str, default="http://localhost:21002")
+    parser.add_argument(
+        "--controller-address", type=str, default="http://localhost:21001"
+    )
     parser.add_argument("--model-name", type=str)
     parser.add_argument("--sgl-endpoint", type=str)
     parser.add_argument("--limit-model-concurrency", type=int, default=5)
@@ -235,10 +271,12 @@ if __name__ == "__main__":
     args = parser.parse_args()
     logger.info(f"args: {args}")
 
-    worker = ModelWorker(args.controller_address,
-                         args.worker_address,
-                         args.sgl_endpoint,
-                         worker_id,
-                         args.no_register,
-                         args.model_name)
+    worker = ModelWorker(
+        args.controller_address,
+        args.worker_address,
+        args.sgl_endpoint,
+        worker_id,
+        args.no_register,
+        args.model_name,
+    )
     uvicorn.run(app, host=args.host, port=args.port, log_level="info")

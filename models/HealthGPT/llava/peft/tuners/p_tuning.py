@@ -41,9 +41,11 @@ class PromptEncoderConfig(PromptLearningConfig):
         encoder_dropout (`float`): The dropout probability of the prompt encoder.
     """
 
-    encoder_reparameterization_type: Union[str, PromptEncoderReparameterizationType] = field(
-        default=PromptEncoderReparameterizationType.MLP,
-        metadata={"help": "How to reparameterize the prompt encoder"},
+    encoder_reparameterization_type: Union[str, PromptEncoderReparameterizationType] = (
+        field(
+            default=PromptEncoderReparameterizationType.MLP,
+            metadata={"help": "How to reparameterize the prompt encoder"},
+        )
     )
     encoder_hidden_size: int = field(
         default=None,
@@ -106,7 +108,9 @@ class PromptEncoder(torch.nn.Module):
         self.input_size = self.token_dim
         self.output_size = self.token_dim
         self.hidden_size = config.encoder_hidden_size
-        self.total_virtual_tokens = config.num_virtual_tokens * config.num_transformer_submodules
+        self.total_virtual_tokens = (
+            config.num_virtual_tokens * config.num_transformer_submodules
+        )
         self.encoder_type = config.encoder_reparameterization_type
 
         # embedding
@@ -145,7 +149,9 @@ class PromptEncoder(torch.nn.Module):
                 self.mlp_head = torch.nn.Sequential(*layers)
 
             else:
-                raise ValueError("Prompt encoder type not recognized. Please use one of MLP (recommended) or LSTM.")
+                raise ValueError(
+                    "Prompt encoder type not recognized. Please use one of MLP (recommended) or LSTM."
+                )
 
     def forward(self, indices):
         input_embeds = self.embedding(indices)
@@ -154,6 +160,8 @@ class PromptEncoder(torch.nn.Module):
         elif self.encoder_type == PromptEncoderReparameterizationType.MLP:
             output_embeds = self.mlp_head(input_embeds)
         else:
-            raise ValueError("Prompt encoder type not recognized. Please use one of MLP (recommended) or LSTM.")
+            raise ValueError(
+                "Prompt encoder type not recognized. Please use one of MLP (recommended) or LSTM."
+            )
 
         return output_embeds

@@ -1,8 +1,7 @@
 # pip install accelerate
-from transformers import AutoProcessor, AutoModelForImageTextToText
-from PIL import Image
-import requests
 import torch
+from PIL import Image
+from transformers import AutoModelForImageTextToText, AutoProcessor
 
 model_id = "/mnt/workspace/workgroup_dev/longli/models/hub/medgemma-4b-it"
 
@@ -18,22 +17,22 @@ image_url = "/mnt/workspace/workgroup_dev/longli/MedLLMBenchmarks/benchmarks/Omn
 image = Image.open(image_url)
 
 messages = [
-    {
-        "role": "system",
-        "content": [{"type": "text", "text": "You are an doctor"}]
-    },
+    {"role": "system", "content": [{"type": "text", "text": "You are an doctor"}]},
     {
         "role": "user",
         "content": [
             {"type": "text", "text": "Describe this image"},
-            {"type": "image", "image": image}
-        ]
-    }
+            {"type": "image", "image": image},
+        ],
+    },
 ]
 
 inputs = processor.apply_chat_template(
-    messages, add_generation_prompt=True, tokenize=True,
-    return_dict=True, return_tensors="pt"
+    messages,
+    add_generation_prompt=True,
+    tokenize=True,
+    return_dict=True,
+    return_tensors="pt",
 ).to(model.device, dtype=torch.bfloat16)
 
 input_len = inputs["input_ids"].shape[-1]

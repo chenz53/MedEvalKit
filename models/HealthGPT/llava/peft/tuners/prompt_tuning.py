@@ -93,7 +93,9 @@ class PromptEmbedding(torch.nn.Module):
     def __init__(self, config, word_embeddings):
         super().__init__()
 
-        total_virtual_tokens = config.num_virtual_tokens * config.num_transformer_submodules
+        total_virtual_tokens = (
+            config.num_virtual_tokens * config.num_transformer_submodules
+        )
         self.embedding = torch.nn.Embedding(total_virtual_tokens, config.token_dim)
         if config.prompt_tuning_init == PromptTuningInit.TEXT:
             from transformers import AutoTokenizer
@@ -110,7 +112,9 @@ class PromptEmbedding(torch.nn.Module):
                 init_token_ids = init_token_ids * num_reps
             init_token_ids = init_token_ids[:total_virtual_tokens]
 
-            word_embedding_weights = word_embeddings(torch.LongTensor(init_token_ids)).detach().clone()
+            word_embedding_weights = (
+                word_embeddings(torch.LongTensor(init_token_ids)).detach().clone()
+            )
             word_embedding_weights = word_embedding_weights.to(torch.float32)
             self.embedding.weight = torch.nn.Parameter(word_embedding_weights)
 

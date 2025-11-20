@@ -1,28 +1,25 @@
 import argparse
-import torch
-
-from llava.constants import (
-    IMAGE_TOKEN_INDEX,
-    DEFAULT_IMAGE_TOKEN,
-    DEFAULT_IM_START_TOKEN,
-    DEFAULT_IM_END_TOKEN,
-    IMAGE_PLACEHOLDER,
-)
-from llava.conversation import conv_templates, SeparatorStyle
-from llava.model.builder import load_pretrained_model
-from llava.utils import disable_torch_init
-from llava.mm_utils import (
-    process_images,
-    tokenizer_image_token,
-    get_model_name_from_path,
-)
-
-from PIL import Image
+import re
+from io import BytesIO
 
 import requests
+import torch
+from llava.constants import (
+    DEFAULT_IM_END_TOKEN,
+    DEFAULT_IM_START_TOKEN,
+    DEFAULT_IMAGE_TOKEN,
+    IMAGE_PLACEHOLDER,
+    IMAGE_TOKEN_INDEX,
+)
+from llava.conversation import conv_templates
+from llava.mm_utils import (
+    get_model_name_from_path,
+    process_images,
+    tokenizer_image_token,
+)
+from llava.model.builder import load_pretrained_model
+from llava.utils import disable_torch_init
 from PIL import Image
-from io import BytesIO
-import re
 
 
 def image_parser(args):
@@ -99,11 +96,9 @@ def eval_model(args):
     image_files = image_parser(args)
     images = load_images(image_files)
     image_sizes = [x.size for x in images]
-    images_tensor = process_images(
-        images,
-        image_processor,
-        model.config
-    ).to(model.device, dtype=torch.float16)
+    images_tensor = process_images(images, image_processor, model.config).to(
+        model.device, dtype=torch.float16
+    )
 
     input_ids = (
         tokenizer_image_token(prompt, tokenizer, IMAGE_TOKEN_INDEX, return_tensors="pt")

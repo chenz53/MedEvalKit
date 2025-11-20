@@ -1,8 +1,9 @@
-import re
 import json
+import re
+from collections import defaultdict
+
 import numpy as np
 
-from collections import defaultdict
 
 class RubricItem:
     def __init__(self, criterion: str, points: float, tags: list[str]):
@@ -28,6 +29,7 @@ class RubricItem:
             tags=d["tags"],
         )
 
+
 def _compute_clipped_stats(
     values: list,
     stat: str,
@@ -45,6 +47,7 @@ def _compute_clipped_stats(
         return np.std(bootstrap_means)
     else:
         raise ValueError(f"Unknown {stat =}")
+
 
 def _aggregate_get_clipped_mean(
     out_samples,
@@ -65,12 +68,13 @@ def _aggregate_get_clipped_mean(
             key = name if stat == "mean" else f"{name}:{stat}"
             final_metrics[key] = _compute_clipped_stats(values, stat)
     score = final_metrics.pop("score", None)
-    
-    return {"score":score,"final_metrics":final_metrics}
+
+    return {"score": score, "final_metrics": final_metrics}
+
 
 def calculate_score(
     rubric_items: list[RubricItem], grading_response_list: list[dict]
-):# -> float | None: # commented out for now, because one of our envs doesn't use python 3.10
+):  # -> float | None: # commented out for now, because one of our envs doesn't use python 3.10
     total_possible_points = sum(
         rubric_item.points for rubric_item in rubric_items if rubric_item.points > 0
     )
@@ -87,6 +91,7 @@ def calculate_score(
     )
     overall_score = achieved_points / total_possible_points
     return overall_score
+
 
 def parse_json_to_dict(json_string: str) -> dict:
     # Remove markdown-style ```json``` markers if present

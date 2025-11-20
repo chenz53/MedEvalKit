@@ -28,7 +28,6 @@ import pandas as pd
 
 from .types import Eval, EvalResult, MessageList, SamplerBase, SingleEvalResult
 
-
 GRADER_TEMPLATE = """
 Your job is to look at a conversation and a rubric item, and score the last turn (i.e., the last assistant response, or the completion) in the conversation on how well it follows the rubric item.
 

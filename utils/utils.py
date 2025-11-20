@@ -1,49 +1,41 @@
-import json
-import math
-import sys
-import copy
-import re
-import os
-import json
-import difflib
 import asyncio
-import random
+import difflib
+import json
+import os
 
 from google import genai
-from tqdm import tqdm
-from tqdm.asyncio import tqdm_asyncio
-from nltk.translate.meteor_score import single_meteor_score
-from nltk.translate.bleu_score import sentence_bleu
-from rouge import Rouge
 from mathruler.grader import extract_boxed_content
-
-from collections import defaultdict, Counter
-from openai import AzureOpenAI, OpenAI,AsyncAzureOpenAI,AsyncOpenAI
+from nltk.translate.bleu_score import sentence_bleu
+from openai import AsyncOpenAI, OpenAI
+from rouge import Rouge
 from tenacity import (
     retry,
     stop_after_attempt,
     wait_fixed,
 )
+from tqdm import tqdm
+from tqdm.asyncio import tqdm_asyncio
 
 
 def tokenize(text):
     text = text.lower().replace(".", " .").split(" ")
     return text
 
-def bleu(pred,target,n):
-    weights=[1/n for _ in range(n)]
+
+def bleu(pred, target, n):
+    weights = [1 / n for _ in range(n)]
     tokenized_target = tokenize(target)
     tokenized_pred = tokenize(pred)
     return sentence_bleu([tokenized_target], tokenized_pred, weights=weights)
 
-def rouge(pred,target):
+
+def rouge(pred, target):
     rouge_scorer = Rouge()
     rouge_scores = rouge_scorer.get_scores(pred.lower(), target.lower())
     return rouge_scores
 
 
-
-def get_compare_messages(question,response,answer):
+def get_compare_messages(question, response, answer):
     prompt = f"""
 Your task is to determine whether the user's answer is correct based on the provided questions and standard answers (for example, if the user expresses a similar meaning to the standard answer, or another interpretation of the standard answer, it is considered correct.)
 
@@ -61,13 +53,14 @@ for example:
 <think>The standard answer is right, and the user's answer is right frontal lobe, they express the same meaning, so it is correct.</think>
 <judge>0</judge>
     """
-    messages = [{"role":"user","content":prompt}]
+    messages = [{"role": "user", "content": prompt}]
     return messages
 
 
 def str_similarity(str1, str2):
     seq = difflib.SequenceMatcher(None, str1, str2)
     return seq.ratio()
+
 
 def find_most_similar_index(str_list, target_str):
     """
@@ -77,56 +70,59 @@ def find_most_similar_index(str_list, target_str):
     most_similar_str = None
     most_similar_index = 0
     highest_similarity = 0
-    
+
     # Iterate through each string in the list
     for i, str in enumerate(str_list):
         # Calculate the similarity between the current string and the target string
         similarity = str_similarity(str, target_str)
-        
+
         # If the current string is more similar than the previous most similar string, update the variables
         if similarity > highest_similarity:
             most_similar_str = str
             most_similar_index = i
             highest_similarity = similarity
-    
+
     # Return the index of the most similar string
     return most_similar_index
 
-def judge_multi_choice(choices,answer,response,alphas = None):
+
+def judge_multi_choice(choices, answer, response, alphas=None):
     response = response.lower()
-    if response.split("\n\n")[0] in [chr(ord('a') + i) for i in range(len(choices))]:
+    if response.split("\n\n")[0] in [chr(ord("a") + i) for i in range(len(choices))]:
         response = response.split("\n\n")[0]
-    elif response.split("\n\n")[-1].split(".")[0] in [chr(ord('a') + i) for i in range(len(choices))]:
+    elif response.split("\n\n")[-1].split(".")[0] in [
+        chr(ord("a") + i) for i in range(len(choices))
+    ]:
         response = response.split("\n\n")[-1].split(".")[0]
-    
+
     response = parse_response(response)
-    alphas = [chr(ord('a') + i) for i in range(len(choices))]
+    alphas = [chr(ord("a") + i) for i in range(len(choices))]
     choices = [choice.lower() for choice in choices]
     flag = False
     response = response.strip().lower()
-    response = response.replace("\n","")
+    response = response.replace("\n", "")
     split_response = response.split(".")[0]
     split_response = split_response.split(":")[-1]
     answer = answer.strip().lower()
-    
+
     if len(split_response) > 300:
         flag = False
     # letter,letter.  choice,choice
     if split_response == answer:
         flag = True
-    
+
     # letter,choice
     elif split_response in alphas:
-        if choices[ord(split_response)-ord("a")]== answer:
+        if choices[ord(split_response) - ord("a")] == answer:
             flag = True
-    
+
     # choice letter
     elif split_response in choices:
-        if answer in alphas and split_response == choices[ord(answer)-ord("a")]:
+        if answer in alphas and split_response == choices[ord(answer) - ord("a")]:
             flag = True
     # unparsed
     else:
-        index = find_most_similar_index(choices,response)
+        index = find_most_similar_index(choices, response)
         if alphas[index] == answer or choices[index] == answer:
             flag = True
     return flag
@@ -137,7 +133,7 @@ def parse_response(response):
     if "boxed" in response:
         response = extract_boxed_content(response)
     elif "<answer>" in response:
-        response = extract(response,"answer")
+        response = extract(response, "answer")
     answer_patterns = [
         "**answer**:",
         "**answer**",
@@ -147,86 +143,83 @@ def parse_response(response):
         "answer:",
         "答案:",
         "final answer",
-        "final answer is"
+        "final answer is",
     ]
     for answer_pattern in answer_patterns:
         if answer_pattern in response:
             response = response.split(answer_pattern)[-1]
-    
+
     return response
 
 
-def judge_close_end_vqa(answer,response):
+def judge_close_end_vqa(answer, response):
     answer = answer.lower()
     response = parse_response(response)
-    response = response.replace("\n","").replace(".","")
+    response = response.replace("\n", "").replace(".", "")
     if response == answer:
         return True
     else:
         return False
 
-def judge_judgement(answer,response):
+
+def judge_judgement(answer, response):
     answer = answer.lower()
     response = parse_response(response)
-    response = response.replace("\n","").replace(".","")
-    if ('yes' in response) ^ ('no' in response):
+    response = response.replace("\n", "").replace(".", "")
+    if ("yes" in response) ^ ("no" in response):
         if answer in response:
             return True
     return False
 
 
-def judge_open_end_vqa(answer,response):
+def judge_open_end_vqa(answer, response):
     answer = answer.lower()
     response = parse_response(response)
-    bleu1 = bleu(response,answer,1)
-    bleu2 = bleu(response,answer,2)
-    bleu3 = bleu(response,answer,3)
-    bleu4 = bleu(response,answer,4)
+    bleu1 = bleu(response, answer, 1)
+    bleu2 = bleu(response, answer, 2)
+    bleu3 = bleu(response, answer, 3)
+    bleu4 = bleu(response, answer, 4)
 
     em = response == answer
-    rouge_scores = rouge(response,answer)
+    rouge_scores = rouge(response, answer)
     rouge_1 = rouge_scores[0]["rouge-1"]["f"]
     rouge_2 = rouge_scores[0]["rouge-2"]["f"]
     rouge_l = rouge_scores[0]["rouge-l"]["f"]
 
-    precision,recall,f1 = calculate_f1(response,answer)
-
+    precision, recall, f1 = calculate_f1(response, answer)
 
     return {
-        "em" : em,
-        "bleu1" : bleu1,
-        "bleu2" : bleu2,
-        "bleu3" : bleu3,
-        "bleu4" : bleu4,
-        "rouge1" : rouge_1,
-        "rouge2" : rouge_2,
-        "rougel" :  rouge_l,
+        "em": em,
+        "bleu1": bleu1,
+        "bleu2": bleu2,
+        "bleu3": bleu3,
+        "bleu4": bleu4,
+        "rouge1": rouge_1,
+        "rouge2": rouge_2,
+        "rougel": rouge_l,
         "precision": precision,
         "recall": recall,
-        "f1" :f1         
+        "f1": f1,
     }
 
 
 def calculate_f1(prediction, ground_truth):
     prediction_tokens = set(prediction.lower().split())
     ground_truth_tokens = set(ground_truth.lower().split())
-    
+
     common = prediction_tokens & ground_truth_tokens
-    
+
     if len(prediction_tokens) == 0 or len(ground_truth_tokens) == 0:
         return 0
-    
+
     precision = len(common) / len(prediction_tokens)
     recall = len(common) / len(ground_truth_tokens)
-    
+
     if precision + recall == 0:
-        return 0,0,0
+        return 0, 0, 0
     f1 = 2 * (precision * recall) / (precision + recall)
-    
-    return f1,precision,recall
 
-
-
+    return f1, precision, recall
 
 
 def get_content_between_a_b(start_tag, end_tag, text):
@@ -243,7 +236,7 @@ def get_content_between_a_b(start_tag, end_tag, text):
     return extracted_text.strip()
 
 
-def extract(text, type,hard = True):
+def extract(text, type, hard=True):
     if text:
         target_str = get_content_between_a_b(f"<{type}>", f"</{type}>", text)
         if target_str:
@@ -255,18 +248,24 @@ def extract(text, type,hard = True):
     else:
         return ""
 
+
 # DATA SAVING
 def save_json(filename, ds):
-    with open(filename, 'w', encoding='utf-8') as f:
+    with open(filename, "w", encoding="utf-8") as f:
         json.dump(ds, f, indent=4, ensure_ascii=False)
 
+
 class fake_response:
-    def __init__(self,usage):
+    def __init__(self, usage):
         self.usage = usage
+
 
 def before_retry_fn(retry_state):
     if retry_state.attempt_number > 1:
-        print(f"Retrying API call. Attempt #{retry_state.attempt_number}, f{retry_state}")
+        print(
+            f"Retrying API call. Attempt #{retry_state.attempt_number}, f{retry_state}"
+        )
+
 
 async def deal_tasks(tasks, max_concurrent_tasks=500):
     semaphore = asyncio.Semaphore(max_concurrent_tasks)
@@ -274,7 +273,7 @@ async def deal_tasks(tasks, max_concurrent_tasks=500):
 
     async def sem_task(task):
         async with semaphore:
-            return await task  
+            return await task
 
     sem_tasks = [sem_task(task) for task in tasks]
 
@@ -286,10 +285,10 @@ async def deal_tasks(tasks, max_concurrent_tasks=500):
 
 
 class openai_llm:
-    def __init__(self,model = None):
+    def __init__(self, model=None):
         if model is None:
-            model = os.environ.get("judge_model","gpt-4.1-2025-04-14")
-        
+            model = os.environ.get("judge_model", "gpt-4.1-2025-04-14")
+
         base_url = os.environ.get("base_url", "https://api.openai.com/v1")
         base_url = None if base_url == "None" else base_url
 
@@ -297,105 +296,103 @@ class openai_llm:
 
         api_key = os.environ["api_key"]
 
-        self.client = OpenAI(
-            api_key=api_key,
-            base_url=base_url
-            )
-        self.async_client = AsyncOpenAI(
-            api_key=api_key,
-            base_url=base_url
-            )
-    
+        self.client = OpenAI(api_key=api_key, base_url=base_url)
+        self.async_client = AsyncOpenAI(api_key=api_key, base_url=base_url)
+
     @retry(wait=wait_fixed(10), stop=stop_after_attempt(1000), before=before_retry_fn)
-    def response(self,messages,**kwargs):
+    def response(self, messages, **kwargs):
         response = self.client.chat.completions.create(
             # gpt4o-0513  gpt4-turbo-2024-04-29 gpt-4o-2
             model=kwargs.get("model", self.model),
             messages=messages,
-            n = kwargs.get("n", 1),
-            temperature= kwargs.get("temperature", 0),
+            n=kwargs.get("n", 1),
+            temperature=kwargs.get("temperature", 0),
             max_tokens=kwargs.get("max_tokens", 4000),
-            timeout=kwargs.get("timeout", 180)
+            timeout=kwargs.get("timeout", 180),
         )
         return response.choices[0].message.content
-    
 
-    
     @retry(wait=wait_fixed(10), stop=stop_after_attempt(1000), before=before_retry_fn)
-    async def response_async(self,messages,**kwargs):
+    async def response_async(self, messages, **kwargs):
         response = await self.async_client.chat.completions.create(
             # gpt4o-0513  gpt4-turbo-2024-04-29 gpt-4o-2
             model=kwargs.get("model", self.model),
             messages=messages,
-            n = kwargs.get("n", 1),
-            temperature= kwargs.get("temperature", 0),
+            n=kwargs.get("n", 1),
+            temperature=kwargs.get("temperature", 0),
             max_tokens=kwargs.get("max_tokens", 4096),
-            timeout=kwargs.get("timeout", 180)
-        )      
+            timeout=kwargs.get("timeout", 180),
+        )
         return response.choices[0].message.content
-    
-    def generate_output(self,messages,**kwargs):
+
+    def generate_output(self, messages, **kwargs):
         try:
-            response = self.response(messages,**kwargs)
+            response = self.response(messages, **kwargs)
         except Exception as e:
             response = None
             print(f"get {kwargs.get('model', self.model)} response failed: {e}")
         return response
-    
-    async def generate_output_async(self,idx, messages,**kwargs):
+
+    async def generate_output_async(self, idx, messages, **kwargs):
         try:
-            response = await self.response_async(messages,**kwargs)
+            response = await self.response_async(messages, **kwargs)
         except Exception as e:
             response = None
             print(f"get {kwargs.get('model', self.model)} response failed: {e}")
-        return idx,response
-    
-    def generate_outputs(self,messages,**kwargs):
-        tasks = [self.generate_output_async(i,messages[i],**kwargs) for i in range(len(messages))]
+        return idx, response
+
+    def generate_outputs(self, messages, **kwargs):
+        tasks = [
+            self.generate_output_async(i, messages[i], **kwargs)
+            for i in range(len(messages))
+        ]
         results = asyncio.run(deal_tasks(tasks))
         results = sorted(results, key=lambda x: x[0])
         results = [x[1] for x in results]
         return results
 
+
 class Gemini:
-    def __init__(self,model = "gemini-2.0-flash") -> None:
+    def __init__(self, model="gemini-2.0-flash") -> None:
         self.model = model
         self.api_key = os.environ.get("api_key")
 
         self.client = genai.Client(api_key=self.api_key)
-    
+
     @retry(wait=wait_fixed(10), stop=stop_after_attempt(3), before=before_retry_fn)
-    def response(self,messages,**kwargs):
+    def response(self, messages, **kwargs):
         response = self.client.models.generate_content(
             model=kwargs.get("model", self.model),
             contents=messages,
         )
         return response.text
-    
-    def generate_output(self,messages,**kwargs):
+
+    def generate_output(self, messages, **kwargs):
         try:
-            response = self.response(messages,**kwargs)
+            response = self.response(messages, **kwargs)
         except Exception as e:
             response = None
             print(f"get {kwargs.get('model', self.model)} response failed: {e}")
         return response
-    
-    def generate_outputs(self,messages,**kwargs):
+
+    def generate_outputs(self, messages, **kwargs):
         results = []
         for message in tqdm(messages):
-            response = self.generate_output(message,**kwargs)
+            response = self.generate_output(message, **kwargs)
             results.append(response)
         return results
 
 
-
 def init_judger():
-    if os.environ.get("judge_model_type", "openai") in ["openai","claude","deepseek"]:
+    if os.environ.get("judge_model_type", "openai") in ["openai", "claude", "deepseek"]:
         judger = openai_llm()
     elif os.environ.get("judge_model_type", "openai") == "gemini":
         judger = Gemini()
     else:
-        raise ValueError("Unsupported judge model type. Please set 'judge_model_type' to 'openai', 'gemini', or 'claude'.")
+        raise ValueError(
+            "Unsupported judge model type. Please set 'judge_model_type' to 'openai', 'gemini', or 'claude'."
+        )
     return judger
+
 
 judger = init_judger()

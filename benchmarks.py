@@ -1,119 +1,147 @@
 from utils import (
-    Medbullets_op4,
-    Medbullets_op5,
-    MedXpertQA,
+    CMB,
+    CMMLU,
+    IU_XRAY,
+    MIMIC_CXR,
+    MMLU,
     MMMU,
-    OmniMedVQA,
     PATH_VQA,
     PMC_VQA,
     SLAKE,
-    SuperGPQA,
     VQA_RAD,
-    HealthBench,
-    PubMedQA,
-    MedMCQA,
-    MedQA_USMLE,
-    MMLU,
-    CMB,
-    CMExam,
-    MedQA_MCMLE,
-    CMMLU,
-    IU_XRAY,
     CheXpert_Plus,
-    MIMIC_CXR,
+    CMExam,
+    HealthBench,
+    Medbullets_op4,
+    Medbullets_op5,
     MedFrameQA,
+    MedMCQA,
+    MedQA_MCMLE,
+    MedQA_USMLE,
+    MedXpertQA,
+    OmniMedVQA,
+    PubMedQA,
     Radrestruct,
-    )
+    SuperGPQA,
+)
 
-#eval_MedQA_USMLE
-def prepare_benchmark(model,eval_dataset,eval_dataset_path,eval_output_path):
+
+# eval_MedQA_USMLE
+def prepare_benchmark(model, eval_dataset, eval_dataset_path, eval_output_path):
     # Hallu,Geometry3k
-    supported_dataset = ["MMMU-Medical-test","MMMU-Medical-val","PATH_VQA","PMC_VQA","VQA_RAD","SLAKE","MedQA_USMLE","MedMCQA","PubMedQA","OmniMedVQA","Medbullets_op4","Medbullets_op5","MedXpertQA-Text","MedXpertQA-MM","SuperGPQA""HealthBench","IU_XRAY","CheXpert_Plus","MIMIC_CXR","CMB","CMExam","CMMLU","MedQA_MCMLE","MedFrameQA"]
+    supported_dataset = [
+        "MMMU-Medical-test",
+        "MMMU-Medical-val",
+        "PATH_VQA",
+        "PMC_VQA",
+        "VQA_RAD",
+        "SLAKE",
+        "MedQA_USMLE",
+        "MedMCQA",
+        "PubMedQA",
+        "OmniMedVQA",
+        "Medbullets_op4",
+        "Medbullets_op5",
+        "MedXpertQA-Text",
+        "MedXpertQA-MM",
+        "SuperGPQAHealthBench",
+        "IU_XRAY",
+        "CheXpert_Plus",
+        "MIMIC_CXR",
+        "CMB",
+        "CMExam",
+        "CMMLU",
+        "MedQA_MCMLE",
+        "MedFrameQA",
+    ]
 
     if eval_dataset in ["MMMU-Medical-test", "MMMU-Medical-val"]:
         if eval_dataset_path:
-            eval_dataset_path = eval_dataset_path.replace(eval_dataset,"MMMU")
-        _ , subset , split = eval_dataset.split("-")
-        dataset = MMMU(model,eval_dataset_path,eval_output_path,split,subset)
+            eval_dataset_path = eval_dataset_path.replace(eval_dataset, "MMMU")
+        _, subset, split = eval_dataset.split("-")
+        dataset = MMMU(model, eval_dataset_path, eval_output_path, split, subset)
 
     elif eval_dataset == "PATH_VQA":
-        dataset = PATH_VQA(model,eval_dataset_path,eval_output_path)
+        dataset = PATH_VQA(model, eval_dataset_path, eval_output_path)
 
     elif eval_dataset == "PMC_VQA":
-        dataset = PMC_VQA(model,eval_dataset_path,eval_output_path)
+        dataset = PMC_VQA(model, eval_dataset_path, eval_output_path)
 
     elif eval_dataset == "VQA_RAD":
-        dataset = VQA_RAD(model,eval_dataset_path,eval_output_path)
+        dataset = VQA_RAD(model, eval_dataset_path, eval_output_path)
 
     elif eval_dataset == "SLAKE":
-        dataset = SLAKE(model,eval_dataset_path,eval_output_path)
+        dataset = SLAKE(model, eval_dataset_path, eval_output_path)
 
     elif eval_dataset == "OmniMedVQA":
-        dataset = OmniMedVQA(model,eval_dataset_path,eval_output_path)
+        dataset = OmniMedVQA(model, eval_dataset_path, eval_output_path)
 
     elif eval_dataset == "Medbullets_op4":
-        dataset = Medbullets_op4(model,eval_dataset_path,eval_output_path)
+        dataset = Medbullets_op4(model, eval_dataset_path, eval_output_path)
 
     elif eval_dataset == "Medbullets_op5":
-        dataset = Medbullets_op5(model,eval_dataset_path,eval_output_path)
+        dataset = Medbullets_op5(model, eval_dataset_path, eval_output_path)
 
-    elif eval_dataset in ["MedXpertQA-Text","MedXpertQA-MM"]:
+    elif eval_dataset in ["MedXpertQA-Text", "MedXpertQA-MM"]:
         if eval_dataset_path:
-            eval_dataset_path = eval_dataset_path.replace(eval_dataset,"MedXpertQA")
-        _,split = eval_dataset.split("-")
-        dataset = MedXpertQA(model,eval_dataset_path,eval_output_path,split)
+            eval_dataset_path = eval_dataset_path.replace(eval_dataset, "MedXpertQA")
+        _, split = eval_dataset.split("-")
+        dataset = MedXpertQA(model, eval_dataset_path, eval_output_path, split)
 
     elif eval_dataset == "SuperGPQA":
-        dataset = SuperGPQA(model,eval_dataset_path,eval_output_path)
-    
+        dataset = SuperGPQA(model, eval_dataset_path, eval_output_path)
+
     elif eval_dataset == "HealthBench":
-        dataset =HealthBench(model,eval_dataset_path,eval_output_path)
-    
+        dataset = HealthBench(model, eval_dataset_path, eval_output_path)
+
     elif eval_dataset == "PubMedQA":
-        dataset = PubMedQA(model,eval_dataset_path,eval_output_path)
+        dataset = PubMedQA(model, eval_dataset_path, eval_output_path)
 
     elif eval_dataset == "MedMCQA":
-        dataset = MedMCQA(model,eval_dataset_path,eval_output_path)
+        dataset = MedMCQA(model, eval_dataset_path, eval_output_path)
 
     elif eval_dataset == "MedQA_USMLE":
-        dataset = MedQA_USMLE(model,eval_dataset_path,eval_output_path)
-    
-    elif eval_dataset in ["MMLU-medical","MMLU-all"]:
+        dataset = MedQA_USMLE(model, eval_dataset_path, eval_output_path)
+
+    elif eval_dataset in ["MMLU-medical", "MMLU-all"]:
         if eval_dataset_path:
-            eval_dataset_path = eval_dataset_path.replace(eval_dataset,"MMLU")
-        _,subject = eval_dataset.split("-")
-        dataset = MMLU(model,eval_dataset_path,eval_output_path,subject)
-    
+            eval_dataset_path = eval_dataset_path.replace(eval_dataset, "MMLU")
+        _, subject = eval_dataset.split("-")
+        dataset = MMLU(model, eval_dataset_path, eval_output_path, subject)
+
     elif eval_dataset == "CMB":
-        dataset = CMB(model,eval_dataset_path,eval_output_path)
-    
+        dataset = CMB(model, eval_dataset_path, eval_output_path)
+
     elif eval_dataset == "CMExam":
-        dataset = CMExam(model,eval_dataset_path,eval_output_path)
+        dataset = CMExam(model, eval_dataset_path, eval_output_path)
 
     elif eval_dataset == "MedQA_MCMLE":
-        dataset = MedQA_MCMLE(model,eval_dataset_path,eval_output_path)
+        dataset = MedQA_MCMLE(model, eval_dataset_path, eval_output_path)
 
     elif eval_dataset == "CMMLU":
-        dataset = CMMLU(model,eval_dataset_path,eval_output_path)
-    
+        dataset = CMMLU(model, eval_dataset_path, eval_output_path)
+
     elif eval_dataset == "IU_XRAY":
-        dataset = IU_XRAY(model,eval_dataset_path,eval_output_path)
+        dataset = IU_XRAY(model, eval_dataset_path, eval_output_path)
 
     elif eval_dataset == "CheXpert_Plus":
-        dataset = CheXpert_Plus(model,eval_dataset_path,eval_output_path)
+        dataset = CheXpert_Plus(model, eval_dataset_path, eval_output_path)
 
     elif eval_dataset == "MIMIC_CXR":
-        dataset = MIMIC_CXR(model,eval_dataset_path,eval_output_path)
-    
+        dataset = MIMIC_CXR(model, eval_dataset_path, eval_output_path)
+
     elif eval_dataset == "MedFrameQA":
-        dataset = MedFrameQA(model,eval_dataset_path,eval_output_path)
+        dataset = MedFrameQA(model, eval_dataset_path, eval_output_path)
     elif eval_dataset == "Radrestruct":
-        dataset = Radrestruct(model,eval_dataset_path,eval_output_path)
+        dataset = Radrestruct(model, eval_dataset_path, eval_output_path)
     else:
-        print(f"unknown eval dataset {eval_dataset}, we only support {supported_dataset}")
+        print(
+            f"unknown eval dataset {eval_dataset}, we only support {supported_dataset}"
+        )
         dataset = None
 
     return dataset
 
-if __name__ == '__main__':
-    pass    
+
+if __name__ == "__main__":
+    pass

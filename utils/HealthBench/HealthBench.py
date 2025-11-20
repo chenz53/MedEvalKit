@@ -1,44 +1,51 @@
-import torch
-import os
-import json
-import gc
-import csv
 import asyncio
-
-from PIL import Image
-from datasets import load_dataset,load_from_disk
+import json
+import os
 from collections import defaultdict
+
 from tqdm import tqdm
-from .utils import RubricItem,GRADER_TEMPLATE,calculate_score,_aggregate_get_clipped_mean,parse_json_to_dict
-from ..utils import save_json,extract,judger,deal_tasks
+
 from ..base_dataset import BaseDataset
+from ..utils import deal_tasks, judger
+from .utils import (
+    GRADER_TEMPLATE,
+    RubricItem,
+    _aggregate_get_clipped_mean,
+    calculate_score,
+    parse_json_to_dict,
+)
+
 
 def read_jsonl(jsonl_path):
     new_datas = []
-    with open(jsonl_path,"r") as f:
-            datas = f.readlines()
+    with open(jsonl_path, "r") as f:
+        datas = f.readlines()
     for line in datas:
         data = json.loads(line)
         new_datas.append(data)
     return new_datas
 
+
 class HealthBench(BaseDataset):
-    def __init__(self,model,dataset_path,output_path):
+    def __init__(self, model, dataset_path, output_path):
         self.model = model
         self.output_path = output_path
-        self.dataset_path = dataset_path if dataset_path is not None else './datas/HealthBench'
+        self.dataset_path = (
+            dataset_path if dataset_path is not None else "./datas/HealthBench"
+        )
         self.samples = []
-        self.chunk_idx = int(os.environ.get("chunk_idx",0))
-        self.num_chunks = int(os.environ.get("num_chunks",1))
+        self.chunk_idx = int(os.environ.get("chunk_idx", 0))
+        self.num_chunks = int(os.environ.get("num_chunks", 1))
 
-    
     def load_data(self):
         self.maybe_download_dataset()
         dataset_path = self.dataset_path
         dataset = []
-        consensus_path = os.path.join(dataset_path,"consensus_2025-05-09-20-00-46.jsonl")
-        hard_path = os.path.join(dataset_path,"hard_2025-05-08-21-00-10.jsonl")
-        eval_path = os.path.join(dataset_path,"2025-05-07-06-14-12_oss_eval.jsonl")
+        consensus_path = os.path.join(
+            dataset_path, "consensus_2025-05-09-20-00-46.jsonl"
+        )
+        hard_path = os.path.join(dataset_path, "hard_2025-05-08-21-00-10.jsonl")
+        eval_path = os.path.join(dataset_path, "2025-05-07-06-14-12_oss_eval.jsonl")
         consensus_dataset = read_jsonl(consensus_path)
         hard_dataset = read_jsonl(hard_path)
         eval_dataset = read_jsonl(eval_path)
@@ -52,20 +59,19 @@ class HealthBench(BaseDataset):
             data["dataset_type"] = "hard"
             dataset.append(data)
 
-        for idx,sample in tqdm(enumerate(dataset)):
+        for idx, sample in tqdm(enumerate(dataset)):
             if idx % self.num_chunks == self.chunk_idx:
                 sample = self.construct_messages(sample)
                 self.samples.append(sample)
         return self.samples
 
-    def construct_messages(self,sample):
+    def construct_messages(self, sample):
         prompt = sample["prompt"]
-        messages = {"messages":prompt}
+        messages = {"messages": prompt}
         sample["messages"] = messages
         return sample
 
-
-    def cal_metrics(self,out_samples):
+    def cal_metrics(self, out_samples):
         async def deal_sample(sample):
             prompt = sample["prompt"]
             response = sample["response"]
@@ -75,8 +81,8 @@ class HealthBench(BaseDataset):
 
             conversations = prompt + [dict(content=response, role="assistant")]
             conversations = "\n\n".join(
-                    [f"{m['role']}: {m['content']}" for m in conversations]
-                )
+                [f"{m['role']}: {m['content']}" for m in conversations]
+            )
 
             grading_response_list = []
             for rubric_item in tqdm(rubric_items):
@@ -85,7 +91,9 @@ class HealthBench(BaseDataset):
                 ).replace("<<rubric_item>>", str(rubric_item))
                 messages: MessageList = [dict(content=grader_prompt, role="user")]
                 while True:
-                    _,grading_response = await judger.generate_output_async(0,messages,temperature=0.6)
+                    _, grading_response = await judger.generate_output_async(
+                        0, messages, temperature=0.6
+                    )
                     if not grading_response:
                         continue
                     grading_response_dict = parse_json_to_dict(grading_response)
@@ -118,7 +126,9 @@ class HealthBench(BaseDataset):
 
             # compute scores for rubric-level tags
             rubric_tag_items_grades = defaultdict(list)
-            for rubric_item, grading_response in zip(rubric_items, grading_response_list):
+            for rubric_item, grading_response in zip(
+                rubric_items, grading_response_list
+            ):
                 curr_item_tags = set()  # Ensure no duplicates in a rubric item.
                 for tag in rubric_item.tags:
                     rubric_tag_items_grades[tag].append((rubric_item, grading_response))
@@ -136,8 +146,12 @@ class HealthBench(BaseDataset):
             # construct the list of explanations and grades
             rubric_items_with_grades = []
             readable_explanation_list = []
-            for rubric_item, grading_response in zip(rubric_items, grading_response_list):
-                explanation = grading_response.get("explanation", "No explanation provided")
+            for rubric_item, grading_response in zip(
+                rubric_items, grading_response_list
+            ):
+                explanation = grading_response.get(
+                    "explanation", "No explanation provided"
+                )
                 criteria_met = grading_response["criteria_met"]
                 readable_explanation = (
                     f"[{criteria_met}] {rubric_item}\n\tExplanation: {explanation}"
@@ -161,23 +175,32 @@ class HealthBench(BaseDataset):
             sample["readable_explanation_str"] = readable_explanation_str
             sample["rubric_items_with_grades"] = rubric_items_with_grades
             return sample
-        
+
         tasks = []
         for sample in out_samples:
             tasks.append(deal_sample(sample))
-        
+
         out_samples = asyncio.run(deal_tasks(tasks))
 
         metrics = _aggregate_get_clipped_mean(out_samples)
 
-        return metrics,out_samples
-    
+        return metrics, out_samples
+
     def maybe_download_dataset(self):
         if not os.path.exists(self.dataset_path):
-            if self.chunk_idx!=0:
-                raise ValueError("Chunk inference is not support for download. Try to run eval.sh insteal of eval_chunked.sh")
-            self._download_file_local(local_path=self.dataset_path,url='https://openaipublic.blob.core.windows.net/simple-evals/healthbench/2025-05-07-06-14-12_oss_eval.jsonl')
-            self._download_file_local(local_path=self.dataset_path,url='https://openaipublic.blob.core.windows.net/simple-evals/healthbench/hard_2025-05-08-21-00-10.jsonl')
-            self._download_file_local(local_path=self.dataset_path,url='https://openaipublic.blob.core.windows.net/simple-evals/healthbench/consensus_2025-05-09-20-00-46.jsonl')
-
-                
+            if self.chunk_idx != 0:
+                raise ValueError(
+                    "Chunk inference is not support for download. Try to run eval.sh insteal of eval_chunked.sh"
+                )
+            self._download_file_local(
+                local_path=self.dataset_path,
+                url="https://openaipublic.blob.core.windows.net/simple-evals/healthbench/2025-05-07-06-14-12_oss_eval.jsonl",
+            )
+            self._download_file_local(
+                local_path=self.dataset_path,
+                url="https://openaipublic.blob.core.windows.net/simple-evals/healthbench/hard_2025-05-08-21-00-10.jsonl",
+            )
+            self._download_file_local(
+                local_path=self.dataset_path,
+                url="https://openaipublic.blob.core.windows.net/simple-evals/healthbench/consensus_2025-05-09-20-00-46.jsonl",
+            )
