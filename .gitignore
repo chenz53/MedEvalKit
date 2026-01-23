@@ -5,4 +5,12 @@ datas/SLAKE
 datas/MedXpertQA
 *.tgz
 *.zip
-
+.venv/
+.python-version
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+eval_results/
+__pycache__

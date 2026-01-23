@@ -9,7 +9,7 @@ class MedGemma:
     def __init__(self, model_path, args):
         super().__init__()
         self.llm = AutoModelForImageTextToText.from_pretrained(
-            model_path, torch_dtype=torch.bfloat16, device_map="auto"
+            model_path, dtype=torch.bfloat16, device_map="auto"
         )
         self.processor = AutoProcessor.from_pretrained(model_path)
 
