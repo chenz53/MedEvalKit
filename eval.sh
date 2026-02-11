@@ -1,12 +1,12 @@
 #!/bin/bash
 # export HF_ENDPOINT=https://hf-mirror.com
 # MMMU-Medical-test,MMMU-Medical-val,PMC_VQA,MedQA_USMLE,MedMCQA,PubMedQA,OmniMedVQA,Medbullets_op4,Medbullets_op5,MedXpertQA-Text,MedXpertQA-MM,SuperGPQA,HealthBench,IU_XRAY,CheXpert_Plus,MIMIC_CXR,CMB,CMExam,CMMLU,MedQA_MCMLE,VQA_RAD,SLAKE,PATH_VQA,MedFrameQA,Radrestruct
-EVAL_DATASETS="MMMU-Medical-test" 
-DATASETS_PATH="hf"
-OUTPUT_PATH="eval_results/MedGemma-1.5-4b-it"
+EVAL_DATASETS="MedXpertQA-MM" 
+DATASETS_PATH="/home/user/data/"
+OUTPUT_PATH="eval_results/Qwen3-VL-4B-Instruct"
 # TestModel,Qwen2-VL,Qwen2.5-VL,BiMediX2,LLava_Med,Huatuo,InternVL,Llama-3.2,LLava,Janus,HealthGPT,BiomedGPT,Vllm_Text,MedGemma,Med_Flamingo,MedDr
-MODEL_NAME="MedGemma"
-MODEL_PATH="google/medgemma-1.5-4b-it"
+MODEL_NAME="Qwen3-VL"
+MODEL_PATH="Qwen/Qwen3-VL-4B-Instruct"
 
 #vllm setting
 CUDA_VISIBLE_DEVICES="0"
@@ -15,11 +15,11 @@ USE_VLLM="False"
 
 #Eval setting
 SEED=42
-REASONING="True"
+REASONING="False"
 TEST_TIMES=1
 
 # Eval LLM setting
-MAX_NEW_TOKENS=8192
+MAX_NEW_TOKENS=128
 MAX_IMAGE_NUM=6
 TEMPERATURE=0
 TOP_P=0.0001

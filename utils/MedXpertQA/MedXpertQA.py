@@ -56,8 +56,12 @@ class MedXpertQA(BaseDataset):
             images = [
                 os.path.join(self.dataset_path, "images", image) for image in images
             ]
-            images = [Image.open(image) for image in images]
-            messages = {"prompt": prompt, "images": images}
+            # Load images and copy to release file handles
+            loaded_images = []
+            for image_path in images:
+                with Image.open(image_path) as img:
+                    loaded_images.append(img.copy())
+            messages = {"prompt": prompt, "images": loaded_images}
             del sample["images"]
         else:
             messages = {"prompt": prompt}

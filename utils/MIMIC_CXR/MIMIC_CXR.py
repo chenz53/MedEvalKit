@@ -73,7 +73,11 @@ class MIMIC_CXR(BaseDataset):
     def construct_messages(self, sample):
         image_root = os.path.join(self.dataset_path, "images")
         images = sample["image"]
-        images = [Image.open(os.path.join(image_root, image)) for image in images]
+        loaded_images = []
+        for image in images:
+            with Image.open(os.path.join(image_root, image)) as img:
+                loaded_images.append(img.copy())
+        images = loaded_images
         findings = sample["findings"]
         impression = sample["impression"]
 

@@ -57,7 +57,8 @@ class SLAKE(BaseDataset):
                 prompt = get_close_ended_prompt(question, is_reasoning, lang)
 
             img_path = os.path.join(dataset_path, "imgs", img_path)
-            image = Image.open(img_path)
+            with Image.open(img_path) as img:
+                image = img.copy()
             dataset.append(
                 {
                     "image": image,

@@ -39,8 +39,9 @@ class CheXpert_Plus(BaseDataset):
 
     def construct_messages(self, sample):
         image_root = os.path.join(self.dataset_path, "images")
-        image = sample["image"]
-        image = Image.open(os.path.join(image_root, image))
+        image_path = sample["image"]
+        with Image.open(os.path.join(image_root, image_path)) as img:
+            image = img.copy()
         findings = sample["findings"]
         impression = sample["impression"]
 

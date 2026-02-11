@@ -55,7 +55,8 @@ class Radrestruct(BaseDataset):
         report, img = sample
         report_id = report.split(".")[0]
         img_path = os.path.join(self.dataset_path, "imgs", f"{img}.png")
-        img = Image.open(img_path).convert("RGB")
+        with Image.open(img_path) as opened_img:
+            img = opened_img.convert("RGB").copy()
 
         sample = {}
         samples = []

@@ -40,6 +40,16 @@ class Qwen2_5_VL:
         return Qwen2_5_VL(model_path, args)
 
 
+@LLMRegistry.register("Qwen3-VL")
+class Qwen3_VL:
+    def __new__(cls, model_path: str, args: Any) -> Any:
+        if os.environ.get("use_vllm", "True") == "True":
+            from models.Qwen3_VL.Qwen3_VL_vllm import Qwen3_VL
+        else:
+            from models.Qwen3_VL.Qwen3_VL_hf import Qwen3_VL
+        return Qwen3_VL(model_path, args)
+
+
 @LLMRegistry.register("BiMediX2")
 class BiMediX2:
     def __new__(cls, model_path: str, args: Any) -> Any:
