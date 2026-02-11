@@ -1,4 +1,3 @@
-
 import torch
 from PIL import Image
 from tqdm import tqdm
@@ -9,7 +8,10 @@ class MedGemma:
     def __init__(self, model_path, args):
         super().__init__()
         self.llm = AutoModelForImageTextToText.from_pretrained(
-            model_path, dtype=torch.bfloat16, device_map="auto"
+            model_path,
+            dtype=torch.bfloat16,
+            device_map="auto",
+            attn_implementation="flash_attention_2",
         )
         self.processor = AutoProcessor.from_pretrained(model_path)
 
@@ -75,7 +77,7 @@ class MedGemma:
             tokenize=True,
             return_dict=True,
             return_tensors="pt",
-        ).to(self.llm.device, dtype=torch.bfloat16)
+        ).to(self.llm.device)
 
         return inputs
 

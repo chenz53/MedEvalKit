@@ -56,9 +56,7 @@ class Qwen3_VL:
             add_generation_prompt=True,
             return_dict=True,
             return_tensors="pt"
-        )
-
-        inputs = inputs.to(self.llm.device)
+        ).to(self.llm.device)
 
         return inputs
 
