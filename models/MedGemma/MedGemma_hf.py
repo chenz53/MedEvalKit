@@ -91,8 +91,9 @@ class MedGemma:
                 max_new_tokens=self.max_new_tokens,
                 do_sample=do_sample,
                 pad_token_id=self.processor.tokenizer.eos_token_id,
-                top_k=None,
-                top_p=None,
+                temperature=self.temperature,
+                repetition_penalty=self.repetition_penalty,
+                top_p=self.top_p,
             )
             generation = generation[0][input_len:]
         decoded = self.processor.decode(generation, skip_special_tokens=True)

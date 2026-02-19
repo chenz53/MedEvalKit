@@ -10,9 +10,10 @@ class MedGemma:
         super().__init__()
         self.llm = LLM(
             model=model_path,
-            max_model_len=32786,
+            max_model_len=32768,
             tensor_parallel_size=int(os.environ.get("tensor_parallel_size", 1)),
             enforce_eager=True,
+            trust_remote_code=True,
             limit_mm_per_prompt={"image": int(os.environ.get("max_image_num", 1))},
         )
         self.processor = AutoProcessor.from_pretrained(model_path)
