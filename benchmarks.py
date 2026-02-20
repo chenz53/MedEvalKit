@@ -1,6 +1,7 @@
 from utils import (
     CMB,
     CMMLU,
+    CT_RATE_LinearProbe,
     IU_XRAY,
     MIMIC_CXR,
     MMLU,
@@ -53,6 +54,7 @@ def prepare_benchmark(model, eval_dataset, eval_dataset_path, eval_output_path):
         "CMMLU",
         "MedQA_MCMLE",
         "MedFrameQA",
+        "CT_RATE_LinearProbe",
     ]
 
     if eval_dataset in ["MMMU-Medical-test", "MMMU-Medical-val"]:
@@ -134,6 +136,10 @@ def prepare_benchmark(model, eval_dataset, eval_dataset_path, eval_output_path):
         dataset = MedFrameQA(model, eval_dataset_path, eval_output_path)
     elif eval_dataset == "Radrestruct":
         dataset = Radrestruct(model, eval_dataset_path, eval_output_path)
+
+    elif eval_dataset == "CT_RATE_LinearProbe":
+        dataset = CT_RATE_LinearProbe(model, eval_dataset_path, eval_output_path)
+
     else:
         print(
             f"unknown eval dataset {eval_dataset}, we only support {supported_dataset}"

@@ -22,3 +22,5 @@ from .Radrestruct.Radrestruct import Radrestruct
 from .SLAKE.SLAKE import SLAKE
 from .SuperGPQA.SuperGPQA import SuperGPQA
 from .VQA_RAD.VQA_RAD import VQA_RAD
+
+from .CT_RATE.CT_RATE_LinearProbe import CT_RATE_LinearProbe

@@ -55,7 +55,7 @@ class Qwen3_VL:
             tokenize=True,
             add_generation_prompt=True,
             return_dict=True,
-            return_tensors="pt"
+            return_tensors="pt",
         ).to(self.llm.device)
 
         return inputs
@@ -63,7 +63,7 @@ class Qwen3_VL:
     def generate_output(self, messages):
         inputs = self.process_messages(messages)
         input_len = inputs["input_ids"].shape[-1]
-        
+
         with torch.inference_mode():
             do_sample = False if self.temperature == 0 else True
             generation = self.llm.generate(
@@ -72,7 +72,7 @@ class Qwen3_VL:
                 do_sample=do_sample,
             )
             generation = generation[0][input_len:]
-        
+
         decoded = self.processor.decode(generation, skip_special_tokens=True)
         return decoded
 
