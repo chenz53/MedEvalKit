@@ -11,7 +11,7 @@ from ..utils import (
     get_compare_messages,
     judge_judgement,
     judge_open_end_vqa,
-    judger,
+    get_judger,
 )
 
 
@@ -115,7 +115,7 @@ class VQA_RAD(BaseDataset):
         if os.environ.get("use_llm_judge", "False") == "True":
             metrics["total metrics"]["right"] = metrics["close"]["right"]
             metrics["open"]["right"] = 0
-            llm = judger
+            llm = get_judger()
             results = llm.generate_outputs(messages_list)
             for i, result in zip(open_id, results):
                 result = extract(result, "judge")

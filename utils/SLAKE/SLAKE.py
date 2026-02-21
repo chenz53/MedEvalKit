@@ -13,7 +13,7 @@ from ..utils import (
     judge_close_end_vqa,
     judge_judgement,
     judge_open_end_vqa,
-    judger,
+    get_judger,
 )
 
 
@@ -152,7 +152,7 @@ class SLAKE(BaseDataset):
 
         if os.environ.get("use_llm_judge", "False") == "True":
             metrics["open"]["right"] = 0
-            llm = judger
+            llm = get_judger()
             results = llm.generate_outputs(messages_list)
             i = 0
             for result, lang, answer_type in zip(results, langs, answer_types):

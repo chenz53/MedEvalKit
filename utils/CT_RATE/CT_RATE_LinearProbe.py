@@ -32,6 +32,7 @@ import os
 
 import numpy as np
 import pandas as pd
+from sklearn.model_selection import train_test_split
 
 from ..base_dataset import BaseDataset
 
@@ -62,12 +63,16 @@ class CT_RATE_LinearProbe(BaseDataset):
     def __init__(
         self,
         dataset_path,
+        train_label_csv=None,
+        val_label_csv=None,
         max_train_samples=None,
         max_val_samples=None,
         **_kwargs,
     ):
         super().__init__()
         self.dataset_path = dataset_path or "./datas/CT_RATE"
+        self.train_label_csv = train_label_csv
+        self.val_label_csv = val_label_csv
         self.max_train_samples = max_train_samples
         self.max_val_samples = max_val_samples
 
@@ -79,20 +84,29 @@ class CT_RATE_LinearProbe(BaseDataset):
     # ── Data loading ─────────────────────────────────────────────────
 
     def load_data(self):
-        """Discover label CSVs and match them against NIfTI volumes."""
-        train_csv, val_csv = self._find_label_csvs()
+        """Load label CSVs and match them against NIfTI volumes."""
+        train_csv, val_csv = self._resolve_label_csvs()
         train_df = pd.read_csv(train_csv)
         val_df = pd.read_csv(val_csv)
 
         self.label_names = self._detect_label_columns(train_df)
         print(f"Detected {len(self.label_names)} abnormality labels")
 
+        train_vol_map = self._build_volume_map("train")
         self.train_records = self._match_records(
-            train_df, self._build_volume_map("train"), self.max_train_samples
+            train_df, train_vol_map, self.max_train_samples
         )
+
+        val_vol_map = self._build_volume_map("valid")
         self.val_records = self._match_records(
-            val_df, self._build_volume_map("valid"), self.max_val_samples
+            val_df, val_vol_map, self.max_val_samples
         )
+
+        if not self.val_records and self.train_records:
+            print("No validation volumes found – splitting train 80/20")
+            self.train_records, self.val_records = train_test_split(
+                self.train_records, test_size=0.2, random_state=42
+            )
 
         print(
             f"CT-RATE loaded: {len(self.train_records)} train, "
@@ -102,16 +116,30 @@ class CT_RATE_LinearProbe(BaseDataset):
 
     # ── File discovery ───────────────────────────────────────────────
 
-    def _find_label_csvs(self):
+    def _resolve_label_csvs(self):
+        train_csv = self.train_label_csv
+        val_csv = self.val_label_csv
+
+        if not train_csv or not val_csv:
+            train_csv, val_csv = self._search_label_csvs(train_csv, val_csv)
+
+        for tag, path in [("Train", train_csv), ("Val", val_csv)]:
+            if not os.path.isfile(path):
+                raise FileNotFoundError(f"{tag} label CSV not found: {path}")
+
+        print(f"Train labels: {train_csv}")
+        print(f"Val labels:   {val_csv}")
+        return train_csv, val_csv
+
+    def _search_label_csvs(self, train_csv=None, val_csv=None):
         root = self.dataset_path
         candidates = glob.glob(os.path.join(root, "**", "*.csv"), recursive=True)
 
-        train_csv = val_csv = None
         for p in candidates:
             low = os.path.basename(p).lower()
-            if "train" in low and "label" in low:
+            if train_csv is None and "train" in low and "label" in low:
                 train_csv = p
-            elif ("valid" in low or "val" in low) and "label" in low:
+            elif val_csv is None and ("valid" in low or "val" in low) and "label" in low:
                 val_csv = p
 
         if train_csv is None or val_csv is None:
@@ -127,9 +155,6 @@ class CT_RATE_LinearProbe(BaseDataset):
                 f"Could not find train/val label CSVs under {root}. "
                 f"Found: {[os.path.basename(c) for c in candidates]}"
             )
-
-        print(f"Train labels: {train_csv}")
-        print(f"Val labels:   {val_csv}")
         return train_csv, val_csv
 
     def _detect_label_columns(self, df):
@@ -145,38 +170,48 @@ class CT_RATE_LinearProbe(BaseDataset):
         ]
 
     def _build_volume_map(self, split_prefix):
-        vol_map = {}
+        """Single os.walk pass instead of repeated recursive globs."""
         root = self.dataset_path
-        for search_dir in [
-            os.path.join(root, split_prefix),
-            os.path.join(root, "dataset", split_prefix),
-            os.path.join(root, f"volumes_{split_prefix}"),
-            root,
-        ]:
+        search_dirs = [
+            os.path.join(root, "dataset", f"{split_prefix}_fixed"),
+        ]
+        for search_dir in search_dirs:
             if not os.path.isdir(search_dir):
                 continue
-            for ext in ("*.nii.gz", "*.nii"):
-                for path in glob.glob(
-                    os.path.join(search_dir, "**", ext), recursive=True
-                ):
-                    base = os.path.basename(path).replace(".nii.gz", "").replace(".nii", "")
-                    vol_map.setdefault(base, path)
+            vol_map = {}
+            for dirpath, _, filenames in os.walk(search_dir):
+                for fn in filenames:
+                    if fn.endswith(".nii.gz"):
+                        base = fn[:-7]
+                    elif fn.endswith(".nii"):
+                        base = fn[:-4]
+                    else:
+                        continue
+                    vol_map.setdefault(base, os.path.join(dirpath, fn))
             if vol_map:
-                break
-        return vol_map
+                return vol_map
+        return {}
 
     def _match_records(self, df, vol_map, max_samples):
+        """Vectorized label extraction with dict-based path lookup."""
+        if not vol_map:
+            return []
+
         id_col = self._detect_id_column(df)
+        names = (
+            df[id_col]
+            .astype(str)
+            .str.strip()
+            .str.replace(r"\.nii(\.gz)?$", "", regex=True)
+        )
+        label_arr = df[self.label_names].to_numpy(dtype=np.float32)
+
         records = []
-        for _, row in df.iterrows():
-            name = str(row[id_col]).strip().replace(".nii.gz", "").replace(".nii", "")
+        for i, name in enumerate(names):
             path = vol_map.get(name)
             if path is None:
                 continue
-            labels = np.array(
-                [float(row[c]) for c in self.label_names], dtype=np.float32
-            )
-            records.append((name, path, labels))
+            records.append((name, path, label_arr[i]))
             if max_samples and len(records) >= max_samples:
                 break
         return records

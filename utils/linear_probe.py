@@ -4,14 +4,19 @@ Provides:
 - Encoder loading (SMB-Vision)
 - Lazy ``VolumeDataset`` that loads NIfTI volumes on access via DataLoader workers
 - Mean-pooled feature extraction with disk caching
-- ``nn.Linear`` probe trained via HF Accelerate
+- Scan-level aggregation (averaging reconstructions of the same scan)
+- ``LinearClassifier`` compatible with HF Trainer for multi-label probing
 - Multi-label classification metrics
 """
+
+from collections import OrderedDict
 
 import numpy as np
 import torch
 import torch.nn as nn
-from torch.utils.data import DataLoader, Dataset, TensorDataset
+import torch.nn.functional as F
+from datasets import Dataset
+from torch.utils.data import DataLoader, Dataset as TorchDataset
 from tqdm import tqdm
 
 # ── Encoder ──────────────────────────────────────────────────────────
@@ -46,11 +51,10 @@ def load_encoder(model_path, device="cuda"):
 # ── Lazy-loading volume dataset ──────────────────────────────────────
 
 
-class VolumeDataset(Dataset):
+class VolumeDataset(TorchDataset):
     """Lazy dataset: loads and patchifies NIfTI volumes on access.
 
-    Each ``__getitem__`` call runs ``smb_utils.imaging_process.preprocess_image``
-    in a DataLoader worker, returning ``(patches, grid_thw, labels)``.
+    Each ``__getitem__`` returns ``(name, patches, grid_thw, labels)``.
     Failed samples return ``None`` and are filtered by :func:`collate_volumes`.
     """
 
@@ -67,7 +71,7 @@ class VolumeDataset(Dataset):
             from smb_utils.imaging_process import preprocess_image
 
             patches, grid = preprocess_image(path, modality="CT", **self.pp)
-            return patches, grid, torch.from_numpy(labels)
+            return name, patches, grid, torch.from_numpy(labels)
         except Exception:
             return None
 
@@ -77,42 +81,47 @@ def collate_volumes(batch):
     batch = [b for b in batch if b is not None]
     if not batch:
         return None
+    names = [b[0] for b in batch]
     return (
-        torch.cat([b[0] for b in batch], dim=0),
-        torch.stack([b[1] for b in batch], dim=0),
+        names,
+        torch.cat([b[1] for b in batch], dim=0),
         torch.stack([b[2] for b in batch], dim=0),
+        torch.stack([b[3] for b in batch], dim=0),
     )
 
 
 # ── Feature extraction ───────────────────────────────────────────────
 
 
-def extract_features(encoder, records, preprocess_kwargs, device, batch_size=2, num_workers=4):
+def extract_features(encoder, records, preprocess_kwargs, device, batch_size=1, num_workers=4):
     """Extract mean-pooled features from NIfTI volumes using lazy loading.
 
-    Volumes are loaded and patchified in DataLoader workers (parallel I/O),
-    then encoded on GPU.  Only the per-volume mean-pooled feature vectors
-    are retained.
+    Uses batch_size=1 with high prefetch_factor so workers stay ahead
+    of GPU processing, hiding I/O latency.
 
-    Returns ``(features, labels)`` as numpy arrays ``[N, D]`` and ``[N, L]``.
+    Returns ``(features, labels, names)`` as numpy arrays.
     """
     dataset = VolumeDataset(records, preprocess_kwargs)
+    use_cuda = "cuda" in str(device)
+    prefetch = max(4, num_workers * 4)
     loader = DataLoader(
         dataset,
         batch_size=batch_size,
         num_workers=num_workers,
+        prefetch_factor=prefetch if num_workers > 0 else None,
+        persistent_workers=num_workers > 0,
         collate_fn=collate_volumes,
-        pin_memory=("cuda" in str(device)),
+        pin_memory=use_cuda,
         shuffle=False,
     )
 
     dtype = next(encoder.parameters()).dtype
-    all_feats, all_labs = [], []
+    all_names, all_feats, all_labs = [], [], []
 
     for batch in tqdm(loader, desc="Extracting features"):
         if batch is None:
             continue
-        patches, grids, labels = batch
+        names, patches, grids, labels = batch
         patches = patches.to(device=device, dtype=dtype)
         grids = grids.to(device=device)
 
@@ -120,120 +129,126 @@ def extract_features(encoder, records, preprocess_kwargs, device, batch_size=2, 
             encoded, _ = encoder(patches, grid_thw=grids)
 
         idx = 0
-        for g in grids:
+        for i, g in enumerate(grids):
             n = g[0].item() * g[1].item() * g[2].item()
             all_feats.append(encoded[idx : idx + n].float().mean(0).cpu())
+            all_names.append(names[i])
             idx += n
         all_labs.append(labels)
 
     features = torch.stack(all_feats).numpy()
     labels = torch.cat(all_labs).numpy()
+    names_arr = np.array(all_names)
     skipped = len(records) - len(features)
     if skipped:
         print(f"  Skipped {skipped}/{len(records)} volumes due to errors")
-    return features, labels
+    return features, labels, names_arr
 
 
-# ── Linear classification head ───────────────────────────────────────
+# ── Scan-level aggregation ───────────────────────────────────────────
 
 
-class LinearProbeHead(nn.Module):
-    """Single ``nn.Linear`` layer for multi-label classification."""
+def scan_key(volume_name: str) -> str:
+    """Derive scan key by stripping the reconstruction suffix.
 
-    def __init__(self, in_features: int, num_labels: int):
-        super().__init__()
-        self.fc = nn.Linear(in_features, num_labels)
-
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        return self.fc(x)
-
-
-# ── Training (Accelerate-native) ────────────────────────────────────
-
-
-def train_linear_head(
-    train_features,
-    train_labels,
-    val_features,
-    val_labels,
-    accelerator,
-    epochs=100,
-    lr=1e-3,
-    weight_decay=1e-4,
-    batch_size=256,
-    seed=42,
-):
-    """Train a linear classification head on cached features.
-
-    Uses HF :class:`~accelerate.Accelerator` for device placement,
-    distributed training, and mixed-precision support.
+    ``train_53_a_1`` → ``train_53_a``  (split_patient_scan)
     """
-    torch.manual_seed(seed)
-
-    head = LinearProbeHead(train_features.shape[1], train_labels.shape[1])
-    optimizer = torch.optim.AdamW(head.parameters(), lr=lr, weight_decay=weight_decay)
-    loader = DataLoader(
-        TensorDataset(
-            torch.from_numpy(train_features).float(),
-            torch.from_numpy(train_labels).float(),
-        ),
-        batch_size=batch_size,
-        shuffle=True,
-    )
-
-    head, optimizer, loader = accelerator.prepare(head, optimizer, loader)
-    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=epochs)
-
-    pos_counts = train_labels.sum(axis=0).clip(min=1)
-    pw = torch.tensor(
-        (len(train_labels) - pos_counts) / pos_counts,
-        dtype=torch.float32,
-        device=accelerator.device,
-    )
-    criterion = nn.BCEWithLogitsLoss(pos_weight=pw)
-
-    log_every = max(1, epochs // 10)
-    for epoch in range(epochs):
-        head.train()
-        total, count = 0.0, 0
-        for xb, yb in loader:
-            loss = criterion(head(xb), yb)
-            accelerator.backward(loss)
-            optimizer.step()
-            optimizer.zero_grad()
-            total += loss.item() * xb.size(0)
-            count += xb.size(0)
-        scheduler.step()
-
-        if (epoch + 1) % log_every == 0 or epoch == 0:
-            msg = f"  Epoch {epoch + 1:4d}/{epochs}  loss={total / count:.4f}"
-            if val_features is not None:
-                vl = _val_loss(
-                    accelerator.unwrap_model(head),
-                    val_features,
-                    val_labels,
-                    criterion,
-                    accelerator.device,
-                )
-                msg += f"  val_loss={vl:.4f}"
-            accelerator.print(msg)
-
-    return accelerator.unwrap_model(head).eval()
+    parts = volume_name.rsplit("_", 1)
+    return parts[0] if len(parts) == 2 else volume_name
 
 
-def _val_loss(head, vf, vl, criterion, device):
-    head.eval()
-    with torch.no_grad():
-        return criterion(
-            head(torch.from_numpy(vf).float().to(device)),
-            torch.from_numpy(vl).float().to(device),
-        ).item()
+def aggregate_by_scan(features, labels, names):
+    """Average reconstruction features per scan; take first label (identical).
+
+    Returns ``(scan_features, scan_labels, scan_keys)`` with one row per scan.
+    """
+    groups: OrderedDict[str, list[int]] = OrderedDict()
+    for i, n in enumerate(names):
+        groups.setdefault(scan_key(n), []).append(i)
+
+    agg_f, agg_l, agg_k = [], [], []
+    for key, idxs in groups.items():
+        agg_f.append(features[idxs].mean(axis=0))
+        agg_l.append(labels[idxs[0]])
+        agg_k.append(key)
+
+    n_recons = len(names)
+    n_scans = len(agg_k)
+    print(f"  Aggregated {n_recons} reconstructions → {n_scans} scans")
+    return np.stack(agg_f), np.stack(agg_l), np.array(agg_k)
 
 
-# ── Evaluation ───────────────────────────────────────────────────────
+# ── Trainer-compatible linear classifier ─────────────────────────────
 
 
-def evaluate_linear_head(head, val_features, val_labels, label_names=None, device="cuda"):
+class LinearClassifier(nn.Module):
+    """Single ``nn.Linear`` for multi-label classification.
+
+    Compatible with HF ``Trainer``: ``forward`` returns
+    ``{"loss": ..., "logits": ...}`` when labels are provided.
+    """
+
+    def __init__(self, hidden_size: int, num_labels: int, pos_weight=None):
+        super().__init__()
+        self.classifier = nn.Linear(hidden_size, num_labels)
+        if pos_weight is not None:
+            self.register_buffer(
+                "pos_weight", torch.tensor(pos_weight, dtype=torch.float32)
+            )
+        else:
+            self.pos_weight = None
+
+    def forward(self, inputs_embeds, labels=None):
+        logits = self.classifier(inputs_embeds)
+        loss = None
+        if labels is not None:
+            loss = F.binary_cross_entropy_with_logits(
+                logits, labels, pos_weight=self.pos_weight
+            )
+        return {"loss": loss, "logits": logits}
+
+
+# ── HF Dataset / metrics helpers ─────────────────────────────────────
+
+
+def build_feature_dataset(features, labels):
+    """Create an HF ``Dataset`` from numpy feature and label arrays."""
+    return Dataset.from_dict(
+        {"inputs_embeds": features.tolist(), "labels": labels.tolist()}
+    ).with_format("torch")
+
+
+def build_compute_metrics():
+    """Return a ``compute_metrics`` callable for HF Trainer (multi-label)."""
+    from sklearn.metrics import f1_score, roc_auc_score
+
+    def _safe(fn, *a, **kw):
+        try:
+            return float(fn(*a, **kw))
+        except ValueError:
+            return None
+
+    def compute_metrics(eval_pred):
+        logits, label_ids = eval_pred
+        probs = 1.0 / (1.0 + np.exp(-logits))
+        preds = (probs >= 0.5).astype(int)
+        return {
+            "macro_f1": float(
+                f1_score(label_ids, preds, average="macro", zero_division=0)
+            ),
+            "micro_f1": float(
+                f1_score(label_ids, preds, average="micro", zero_division=0)
+            ),
+            "micro_auc_roc": _safe(roc_auc_score, label_ids, probs, average="micro"),
+        }
+
+    return compute_metrics
+
+
+# ── Detailed evaluation ──────────────────────────────────────────────
+
+
+def evaluate_linear_head(model, val_features, val_labels, label_names=None, device="cuda"):
     """Compute multi-label classification metrics.
 
     Returns ``{"aggregate": {...}, "per_label": {...}}``.
@@ -247,13 +262,11 @@ def evaluate_linear_head(head, val_features, val_labels, label_names=None, devic
         roc_auc_score,
     )
 
-    head = head.to(device).eval()
+    model = model.to(device).eval()
     with torch.no_grad():
-        probs = (
-            torch.sigmoid(head(torch.from_numpy(val_features).float().to(device)))
-            .cpu()
-            .numpy()
-        )
+        output = model(torch.from_numpy(val_features).float().to(device))
+        logits = output["logits"] if isinstance(output, dict) else output
+        probs = torch.sigmoid(logits).cpu().numpy()
     preds = (probs >= 0.5).astype(int)
 
     n = val_labels.shape[1]

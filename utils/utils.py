@@ -395,4 +395,11 @@ def init_judger():
     return judger
 
 
-judger = init_judger()
+_judger = None
+
+
+def get_judger():
+    global _judger
+    if _judger is None:
+        _judger = init_judger()
+    return _judger

@@ -4,6 +4,8 @@ Default: ``smb-vision-v1`` on CT-RATE.  Volumes are lazy-loaded via
 DataLoader workers.  Pooled features are cached to disk so re-runs
 only retrain the linear head.
 
+Uses HF ``Trainer`` for the linear-probe training step.
+
     accelerate launch eval_encoder.py --dataset_path ./datas/CT_RATE
 """
 
@@ -13,7 +15,6 @@ from argparse import ArgumentParser
 
 import numpy as np
 import torch
-from accelerate import Accelerator
 from accelerate.utils import set_seed
 
 DEFAULT_MODEL = "standardmodelbio/smb-vision-v1"
@@ -24,10 +25,12 @@ def parse_args():
     p.add_argument("--model_path", default=DEFAULT_MODEL)
     p.add_argument("--dataset", default="CT_RATE")
     p.add_argument("--dataset_path", default="./datas/CT_RATE")
+    p.add_argument("--train_label_csv", default=None, help="Path to train labels CSV")
+    p.add_argument("--val_label_csv", default=None, help="Path to val labels CSV")
     p.add_argument("--output_path", default=None)
     # extraction
-    p.add_argument("--batch_size", type=int, default=2)
-    p.add_argument("--num_workers", type=int, default=4)
+    p.add_argument("--batch_size", type=int, default=1)
+    p.add_argument("--num_workers", type=int, default=8)
     p.add_argument("--force_extract", action="store_true")
     # training
     p.add_argument("--lr", type=float, default=1e-3)
@@ -48,7 +51,6 @@ def parse_args():
 
 def main():
     args = parse_args()
-    accelerator = Accelerator()
     set_seed(args.seed)
 
     output = args.output_path or os.path.join(
@@ -59,42 +61,103 @@ def main():
     # ── Dataset ──
     dataset = _load_dataset(args)
 
-    # ── Features (extract on main process → cache → all processes load) ──
-    if accelerator.is_main_process:
-        _ensure_features(args, dataset, cache_dir, str(accelerator.device))
-    accelerator.wait_for_everyone()
+    # ── Features (extract → aggregate by scan → cache) ──
+    local_rank = int(os.environ.get("LOCAL_RANK", 0))
+    device = f"cuda:{local_rank}" if torch.cuda.is_available() else "cpu"
+    if local_rank == 0:
+        _ensure_features(args, dataset, cache_dir, device)
+    if int(os.environ.get("WORLD_SIZE", 1)) > 1:
+        torch.distributed.barrier()
+
+    from utils.linear_probe import aggregate_by_scan
 
     train_f = np.load(os.path.join(cache_dir, "train_features.npy"))
     train_l = np.load(os.path.join(cache_dir, "train_labels.npy"))
+    train_n = np.load(os.path.join(cache_dir, "train_names.npy"))
+    train_f, train_l, _ = aggregate_by_scan(train_f, train_l, train_n)
+
     val_f = np.load(os.path.join(cache_dir, "valid_features.npy"))
     val_l = np.load(os.path.join(cache_dir, "valid_labels.npy"))
-    accelerator.print(
-        f"Features: train {train_f.shape}, val {val_f.shape}, "
+    val_n = np.load(os.path.join(cache_dir, "valid_names.npy"))
+    val_f, val_l, _ = aggregate_by_scan(val_f, val_l, val_n)
+
+    print(
+        f"Scan features: train {train_f.shape}, val {val_f.shape}, "
         f"labels {len(dataset.label_names)}"
     )
 
-    # ── Train ──
-    from utils.linear_probe import train_linear_head
+    # ── Train via HF Trainer ──
+    from transformers import Trainer, TrainingArguments
 
-    accelerator.print("Training linear head ...")
-    head = train_linear_head(
-        train_f, train_l, val_f, val_l, accelerator,
-        epochs=args.epochs, lr=args.lr, weight_decay=args.weight_decay,
-        batch_size=args.head_batch_size, seed=args.seed,
+    from utils.linear_probe import (
+        LinearClassifier,
+        build_compute_metrics,
+        build_feature_dataset,
     )
 
-    # ── Evaluate & save ──
-    if accelerator.is_main_process:
+    train_ds = build_feature_dataset(train_f, train_l)
+    val_ds = build_feature_dataset(val_f, val_l)
+
+    pos_counts = train_l.sum(axis=0).clip(min=1)
+    pos_weight = (len(train_l) - pos_counts) / pos_counts
+
+    model = LinearClassifier(
+        hidden_size=train_f.shape[1],
+        num_labels=train_l.shape[1],
+        pos_weight=pos_weight,
+    )
+
+    trainer_dir = os.path.join(output, "trainer")
+    training_args = TrainingArguments(
+        output_dir=trainer_dir,
+        num_train_epochs=args.epochs,
+        per_device_train_batch_size=args.head_batch_size,
+        per_device_eval_batch_size=args.head_batch_size,
+        learning_rate=args.lr,
+        weight_decay=args.weight_decay,
+        lr_scheduler_type="constant",
+        eval_strategy="steps",
+        eval_steps=10,
+        save_strategy="steps",
+        save_steps=10,
+        save_total_limit=2,
+        load_best_model_at_end=True,
+        metric_for_best_model="micro_auc_roc",
+        greater_is_better=True,
+        logging_strategy="steps",
+        logging_steps=5,
+        seed=args.seed,
+        remove_unused_columns=False,
+        report_to="wandb",
+        run_name=f"linear-probe-{args.dataset}",
+    )
+
+    trainer = Trainer(
+        model=model,
+        args=training_args,
+        train_dataset=train_ds,
+        eval_dataset=val_ds,
+        compute_metrics=build_compute_metrics(),
+    )
+
+    print("Training linear head ...")
+    trainer.train()
+    print("Loaded best checkpoint (by eval micro_f1)")
+
+    # ── Detailed per-label evaluation & save ──
+    if local_rank == 0:
         from utils.linear_probe import evaluate_linear_head
 
-        device = next(head.parameters()).device
-        metrics = evaluate_linear_head(head, val_f, val_l, dataset.label_names, device)
+        model_device = next(model.parameters()).device
+        metrics = evaluate_linear_head(
+            model, val_f, val_l, dataset.label_names, model_device
+        )
         metrics["config"] = {
             k: v for k, v in vars(args).items() if not k.startswith("_")
         }
 
         os.makedirs(output, exist_ok=True)
-        torch.save(head.state_dict(), os.path.join(output, "linear_head.pt"))
+        torch.save(model.state_dict(), os.path.join(output, "linear_head.pt"))
         with open(os.path.join(output, "metrics.json"), "w") as f:
             json.dump(metrics, f, indent=2)
 
@@ -109,6 +172,8 @@ def _load_dataset(args):
 
     ds = CT_RATE_LinearProbe(
         dataset_path=args.dataset_path,
+        train_label_csv=args.train_label_csv,
+        val_label_csv=args.val_label_csv,
         max_train_samples=args.max_train_samples,
         max_val_samples=args.max_val_samples,
     )
@@ -117,7 +182,7 @@ def _load_dataset(args):
 
 
 def _ensure_features(args, dataset, cache_dir, device):
-    """Extract and cache pooled features for any splits not already on disk."""
+    """Extract, aggregate by scan, and cache pooled features."""
     os.makedirs(cache_dir, exist_ok=True)
 
     def _cached(split):
@@ -125,6 +190,7 @@ def _ensure_features(args, dataset, cache_dir, device):
             not args.force_extract
             and os.path.exists(os.path.join(cache_dir, f"{split}_features.npy"))
             and os.path.exists(os.path.join(cache_dir, f"{split}_labels.npy"))
+            and os.path.exists(os.path.join(cache_dir, f"{split}_names.npy"))
         )
 
     splits = [
@@ -148,12 +214,13 @@ def _ensure_features(args, dataset, cache_dir, device):
     )
 
     for split, records in splits:
-        feats, labs = extract_features(
+        feats, labs, names = extract_features(
             encoder, records, pp, device, args.batch_size, args.num_workers
         )
         np.save(os.path.join(cache_dir, f"{split}_features.npy"), feats)
         np.save(os.path.join(cache_dir, f"{split}_labels.npy"), labs)
-        print(f"Cached {split} features ({feats.shape}) → {cache_dir}")
+        np.save(os.path.join(cache_dir, f"{split}_names.npy"), names)
+        print(f"Cached {split} scan features ({feats.shape}) → {cache_dir}")
 
     del encoder
     torch.cuda.empty_cache()

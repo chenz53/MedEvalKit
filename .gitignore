@@ -14,3 +14,4 @@ datas/MedXpertQA
 .env.production.local
 eval_results/
 __pycache__
+wandb/

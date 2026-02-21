@@ -6,7 +6,7 @@ from collections import defaultdict
 from tqdm import tqdm
 
 from ..base_dataset import BaseDataset
-from ..utils import deal_tasks, judger
+from ..utils import deal_tasks, get_judger
 from .utils import (
     GRADER_TEMPLATE,
     RubricItem,
@@ -91,7 +91,7 @@ class HealthBench(BaseDataset):
                 ).replace("<<rubric_item>>", str(rubric_item))
                 messages: MessageList = [dict(content=grader_prompt, role="user")]
                 while True:
-                    _, grading_response = await judger.generate_output_async(
+                    _, grading_response = await get_judger().generate_output_async(
                         0, messages, temperature=0.6
                     )
                     if not grading_response:
